@@ -30,6 +30,7 @@ fn init_test_db() {
   };
 }
 
+// ============================================================================
 /// Write output to file to see the results with our very own eyes. 
 /// Default to home folder. 
 pub(crate) fn save_output<T: Serialize>(data: T, filename: &str, identifier: &str) {
@@ -39,4 +40,32 @@ pub(crate) fn save_output<T: Serialize>(data: T, filename: &str, identifier: &st
     .expect(format!("[{}] Failed to create output file.", identifier).as_str());
   serde_json::to_writer_pretty(file, &data)
     .expect(format!("[{}] Failed to write json.", identifier).as_str());
+}
+
+// =============================================================================
+// The json required to test out parallel search. 
+pub(crate) fn web_search_json() -> String {
+  let payload = serde_json::json!({
+    "id": "call_7945d98c45dd4e0583c04db8",
+    "name": "web_search",
+    "arguments": serde_json::json!({
+      "objective": "Find github repositories for text-splitter and semchunk-rs",
+      "search_queries": ["github text-splitter rust", "github semchunk-rs"]
+    }).to_string()
+  });
+
+  payload.to_string()
+}
+
+pub(crate) fn web_fetch_json() -> String {
+  let payload = serde_json::json!({
+    "id": "8124f905-3d1b-4c67-b6e6-c70de2a26684",
+    "name": "web_fetch",
+    "arguments": serde_json::json!({
+      "urls": ["https://crates.io/crates/text-splitter/0.30.1"],
+      "objective": "Get detailed information about the text-splitter crate version 0.30.1 including features, documentation, and usage"
+    }).to_string()
+  });
+
+  payload.to_string()
 }

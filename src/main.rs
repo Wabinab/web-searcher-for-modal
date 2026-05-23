@@ -1,7 +1,6 @@
 use std::io::{self, Read};
 
-use crate::{apperror::AppError, metadata::{SearchResOl, ToolCall, WebFetchPayloadParallel, 
-  WebSearchPayloadParallel}, ollama_search::search_data_ollama, parallel_search::search_data_parallel};
+use crate::{apperror::AppError, metadata::{OllamaSearchResp, SearchResOl, ToolCall, WebFetchPayloadParallel, WebSearchPayloadParallel}, ollama_search::search_data_ollama, parallel_search::search_data_parallel};
 
 mod parallel_search;
 mod ollama_search;
@@ -34,12 +33,9 @@ fn handle_tool_call(input: &str) -> Result<String, AppError> {
       let res = search_data_parallel(&payload);
       if res.is_ok() { 
         let parallel_resp = res.unwrap();
-        if parallel_resp.result.content.len() > 1 {
-          return Err(AppError::BadRequest("INTERNAL: .first() no longer valid as content has more than 1 item.".to_string()));
-        }
-        let retval = parallel_resp.result.content.first()
-          .expect("No item in ContentItem. Check Parallel Search MCP for any changes."); 
-        return Ok(retval.text.clone());
+        // We'll consume structured_content after this. If need to save, save BEFORE this point.
+        let search_resp: OllamaSearchResp = parallel_resp.result.structured_content.into();
+        return Ok(serde_json::to_string(&search_resp.results)?)
       }
       // If not ok, fall back on Ollama. 
       let queries: Vec<&str> = payload.params.arguments.iter_queries().collect();

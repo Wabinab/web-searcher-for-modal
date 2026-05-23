@@ -33,35 +33,8 @@ pub(crate) fn fetch_data_parallel(mcp_payload: &WebFetchPayloadParallel) -> Resu
 // ========================================
 #[cfg(test)]
 mod tests {
-  use crate::{metadata::ToolCall, test_utils::save_output};
-
-use super::*;
-
-  fn web_search_json() -> String {
-    let payload = serde_json::json!({
-      "id": "call_7945d98c45dd4e0583c04db8",
-      "name": "web_search",
-      "arguments": serde_json::json!({
-        "objective": "Find github repositories for text-splitter and semchunk-rs",
-        "search_queries": ["github text-splitter rust", "github semchunk-rs"]
-      }).to_string()
-    });
-
-    payload.to_string()
-  }
-
-  fn web_fetch_json() -> String {
-    let payload = serde_json::json!({
-      "id": "8124f905-3d1b-4c67-b6e6-c70de2a26684",
-      "name": "web_fetch",
-      "arguments": serde_json::json!({
-        "urls": ["https://crates.io/crates/text-splitter/0.30.1"],
-        "objective": "Get detailed information about the text-splitter crate version 0.30.1 including features, documentation, and usage"
-      }).to_string()
-    });
-
-    payload.to_string()
-  }
+  use crate::{metadata::ToolCall, test_utils::{save_output, web_fetch_json, web_search_json}};
+  use super::*;
 
   #[test]
   #[ignore]
@@ -69,23 +42,20 @@ use super::*;
     let call_opt = ToolCall::from_input(&web_search_json());
     assert!(call_opt.is_ok(), "Expected Ok, got {:#?}", call_opt.err());
     let call = call_opt.unwrap();
-    match call.name.as_str() {
-      "web_search" => {
-        let payload_opt = call.build_payload();
-        assert!(payload_opt.is_ok(), "Expected Ok, got {:#?}", payload_opt.err());
-        let payload: WebSearchPayloadParallel = payload_opt.unwrap();
+    assert_eq!(call.name.as_str(), "web_search", "You probably used the wrong json string. Check!");
 
-        let resp = search_data_parallel(&payload);
-        assert!(resp.is_ok(), "Expected Ok, got {:#?}", resp.err());
-        let parallel_resp = resp.unwrap();
+    let payload_opt = call.build_payload();
+    assert!(payload_opt.is_ok(), "Expected Ok, got {:#?}", payload_opt.err());
+    let payload: WebSearchPayloadParallel = payload_opt.unwrap();
 
-        save_output(&parallel_resp, "parallel_search.json", "web_search_parallel");
-        let first = parallel_resp.result.content.first();
-        assert!(first.is_some());
-        assert!(parallel_resp.result.structured_content.results.len() > 0);
-      }
-      _ =>  panic!("You probably used the wrong json string. Check!"),
-    }
+    let resp = search_data_parallel(&payload);
+    assert!(resp.is_ok(), "Expected Ok, got {:#?}", resp.err());
+    let parallel_resp = resp.unwrap();
+
+    save_output(&parallel_resp, "parallel_search.json", "web_search_parallel");
+    let first = parallel_resp.result.content.first();
+    assert!(first.is_some());
+    assert!(parallel_resp.result.structured_content.results.len() > 0);
   }
 
   #[test]
@@ -94,22 +64,19 @@ use super::*;
     let call_opt = ToolCall::from_input(&web_fetch_json());
     assert!(call_opt.is_ok(), "Expected Ok, got {:#?}", call_opt.err());
     let call = call_opt.unwrap();
-    match call.name.as_str() {
-      "web_fetch" => {
-        let payload_opt = call.build_payload();
-        assert!(payload_opt.is_ok(), "Expected Ok, got {:#?}", payload_opt.err());
-        let payload: WebFetchPayloadParallel = payload_opt.unwrap();
+    assert_eq!(call.name.as_str(), "web_fetch", "You probably used the wrong json string. Check!");
 
-        let resp = fetch_data_parallel(&payload);
-        assert!(resp.is_ok(), "Expected Ok, got {:#?}", resp.err());
-        let parallel_resp = resp.unwrap();
+    let payload_opt = call.build_payload();
+    assert!(payload_opt.is_ok(), "Expected Ok, got {:#?}", payload_opt.err());
+    let payload: WebFetchPayloadParallel = payload_opt.unwrap();
 
-        save_output(&parallel_resp, "parallel_fetch.json", "web_fetch_parallel");;
-        let first = parallel_resp.result.content.first();
-        assert!(first.is_some());
-        assert_eq!(parallel_resp.result.structured_content.results.len(), 1);
-      }, 
-      _ => panic!("You probably used the wrong json string. Check!"),
-    }
+    let resp = fetch_data_parallel(&payload);
+    assert!(resp.is_ok(), "Expected Ok, got {:#?}", resp.err());
+    let parallel_resp = resp.unwrap();
+
+    save_output(&parallel_resp, "parallel_fetch.json", "web_fetch_parallel");;
+    let first = parallel_resp.result.content.first();
+    assert!(first.is_some());
+    assert_eq!(parallel_resp.result.structured_content.results.len(), 1);
   }
 }
