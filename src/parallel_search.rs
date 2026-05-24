@@ -33,7 +33,7 @@ pub(crate) fn fetch_data_parallel(mcp_payload: &WebFetchPayloadParallel) -> Resu
 // ========================================
 #[cfg(test)]
 mod tests {
-  use crate::{metadata::ToolCall, test_utils::{save_output, web_fetch_json, web_search_json}};
+  use crate::{metadata::ToolCall, test_utils::{multiple_fetch_json, save_output, web_fetch_json, web_search_json}};
   use super::*;
 
   #[test]
@@ -74,9 +74,20 @@ mod tests {
     assert!(resp.is_ok(), "Expected Ok, got {:#?}", resp.err());
     let parallel_resp = resp.unwrap();
 
-    save_output(&parallel_resp, "parallel_fetch.json", "web_fetch_parallel");;
+    save_output(&parallel_resp, "parallel_fetch.json", "web_fetch_parallel");
     let first = parallel_resp.result.content.first();
     assert!(first.is_some());
     assert_eq!(parallel_resp.result.structured_content.results.len(), 1);
+  }
+
+  #[test]
+  #[ignore]
+  fn test_web_fetch_with_multiple_urls_parallel_works() {
+    let call = ToolCall::from_input(&multiple_fetch_json()).expect("Tool call failed.");
+    assert_eq!(call.name.as_str(), "web_fetch", "You probably used the wrong json string. Check!");
+    let payload: WebFetchPayloadParallel = call.build_payload().expect("Build payload failed.");
+    let parallel_resp = fetch_data_parallel(&payload).expect("Fetch multiple urls failed.");
+    save_output(&parallel_resp, "parallel_multiple_fetch.json", "web_fetch_multiple_parallel");
+    assert!(parallel_resp.result.structured_content.results.len() > 1);
   }
 }

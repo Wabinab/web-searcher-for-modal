@@ -69,3 +69,18 @@ pub(crate) fn web_fetch_json() -> String {
 
   payload.to_string()
 }
+
+/// We'll try to return 2 urls and see how it looks like. 
+/// LLM most likely won't do this, but we need to prepare for it. 
+pub(crate) fn multiple_fetch_json() -> String {
+  use uuid::Uuid;
+  let payload = serde_json::json!({
+    "id": Uuid::new_v4(),
+    "name": "web_fetch",
+    "arguments": serde_json::json!({
+      "urls": ["https://www.morphllm.com/pricing", "https://www.koyeb.com/pricing#compute"],
+      "objective": "Get detailed pricing information for comparison between both providers."
+    }).to_string()
+  });
+  payload.to_string()
+}

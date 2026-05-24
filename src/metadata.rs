@@ -68,8 +68,8 @@ pub(crate) struct FetchStructuredContent {
   pub session_id: String,
 }
 
-#[cfg_attr(test, derive(Serialize, Clone))]
-#[derive(Debug, Deserialize, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(test, derive(Serialize))]
+#[derive(Debug, Clone, Deserialize, BorshSerialize, BorshDeserialize)]
 pub(crate) struct FetchRes {
   pub url: String,
   pub title: String,
@@ -209,6 +209,38 @@ impl From<SearchStructuredContent> for OllamaSearchResp {
   }
 }
 
+/// For web_fetch, we'll define a custom struct to return. 
+#[derive(Debug, Serialize)]
+pub(crate) struct FetchRetVal {
+  pub title: String,
+  pub content: String,
+  #[serde(default, skip_serializing_if="Option::is_none")]
+  pub publish_date: Option<String>,
+  #[serde(default, skip_serializing_if="Vec::is_empty")]
+  pub links: Vec<String>,
+  #[serde(default, skip_serializing_if="Option::is_none")]
+  pub full_content: Option<String>
+}
+
+impl From<FetchResOl> for FetchRetVal {
+  fn from(value: FetchResOl) -> Self {
+    FetchRetVal { title: value.title, content: value.content, publish_date: None, 
+      links: value.links, full_content: None }
+  }
+}
+
+impl From<FetchStructuredContent> for Vec<FetchRetVal> {
+  fn from(value: FetchStructuredContent) -> Self {
+    value.results.into_iter().map(|r| r.into()).collect()
+  }
+}
+
+impl From<FetchRes> for FetchRetVal {
+  fn from(value: FetchRes) -> Self {
+    FetchRetVal { title: value.title, content: value.excerpts.join("\n"), 
+      publish_date: value.publish_date, links: vec![value.url], full_content: value.full_content }
+  }
+}
 
 // ==========================================================
 #[cfg(test)]
