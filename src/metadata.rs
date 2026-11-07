@@ -1,11 +1,10 @@
 //! All the structs and constants will go here. 
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde_json::Value;
 
-use crate::apperror::AppError;
-
-pub(crate) const PARALLEL_MCP_URL: &str = "https://search.parallel.ai/mcp";
+// pub(crate) const PARALLEL_MCP_URL: &str = "https://search.parallel.ai/mcp";
+pub(crate) const PARALLEL_MCP_URL: &str = "https://mcp.parallel.ai/mcp";
 pub(crate) const OLLAMA_MCP_URL: &str = "https://ollama.com/api/";  // /web_search or web_fetch.
 
 // ===============================================
@@ -44,8 +43,8 @@ pub(crate) struct SearchStructuredContent {
   pub search_id: String, 
   pub results: Vec<SearchRes>,
   pub warnings: Option<Value>,  // Warnings won't be saved, but will be displayed to user. 
-  pub usage: Vec<Usage>,  
-  pub session_id: String,
+  #[serde(default)] pub usage: Vec<Usage>,  
+  #[serde(default)] pub session_id: String,
 }
 
 #[cfg_attr(test, derive(Serialize, Clone))]
@@ -62,17 +61,17 @@ pub(crate) struct SearchRes {
 pub(crate) struct FetchStructuredContent {
   pub extract_id: String, 
   pub results: Vec<FetchRes>,
-  pub errors: Vec<Value>,
+  #[serde(default)] pub errors: Vec<Value>,
   pub warnings: Option<Value>,
-  pub usage: Vec<Usage>,
-  pub session_id: String,
+  #[serde(default)] pub usage: Vec<Usage>,
+  #[serde(default)] pub session_id: String,
 }
 
 #[cfg_attr(test, derive(Serialize))]
 #[derive(Debug, Clone, Deserialize, BorshSerialize, BorshDeserialize)]
 pub(crate) struct FetchRes {
   pub url: String,
-  pub title: String,
+  pub title: Option<String>,
   pub publish_date: Option<String>,
   pub excerpts: Vec<String>,
   pub full_content: Option<String>,  // Maybe Vec<String>??? Unsure, currently always return None. 
@@ -103,6 +102,7 @@ pub(crate) struct WebParams<T> {
 }
 
 pub(crate) type WebSearchPayloadParallel = WebPayloadParallel<SearchArgsParallel>;
+// Web-fetch is renamed "extract api" but the call is still "web_fetch"
 pub(crate) type WebFetchPayloadParallel = WebPayloadParallel<FetchArgsParallel>;
 
 #[cfg_attr(test, derive(Clone))]
@@ -124,22 +124,31 @@ impl From<WebSearchArgs> for SearchArgsParallel {
   }
 }
 
+
 #[cfg_attr(test, derive(Clone))]
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct FetchArgsParallel {
+  /// A description of what to look for in the pages, up to 200 characters.
   pub objective: String,
-  pub urls: Vec<String>
+  pub urls: Vec<String>,
+  // New fields
+  /// Keyword queries of 3–6 words each that focus the excerpts. When fetching results from web_search, pass the same queries.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub search_queries: Option<Vec<String>>,
+  // pub full_content: bool,
+  // pub allow_live_fetch: bool,
 }
 
-impl FetchArgsParallel {
-  pub(crate) fn iter_urls(&self) -> impl Iterator<Item = &str> {
-    self.urls.iter().map(|u| u.as_str())
-  }
-}
+// impl FetchArgsParallel {
+//   pub(crate) fn iter_urls(&self) -> impl Iterator<Item = &str> {
+//     self.urls.iter().map(|u| u.as_str())
+//   }
+// }
 
 impl From<WebFetchArgs> for FetchArgsParallel {
   fn from(value: WebFetchArgs) -> Self {
-    FetchArgsParallel { objective: value.objective, urls: value.urls }
+    FetchArgsParallel { objective: value.objective, urls: value.urls, 
+      search_queries: value.search_queries }
   }
 }
 
@@ -184,7 +193,8 @@ pub(crate) struct ToolCall {
 #[derive(Debug, Deserialize)]
 pub(crate) struct WebFetchArgs {
   pub objective: String,
-  pub urls: Vec<String>
+  pub urls: Vec<String>,
+  pub search_queries: Option<Vec<String>>
 }
 
 #[derive(Debug, Deserialize)]
