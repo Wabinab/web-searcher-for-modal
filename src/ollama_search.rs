@@ -64,7 +64,7 @@ mod tests {
   #[test]
   #[ignore]
   fn test_ollama_web_fetch_works() {
-    let ollama_resp = fetch_data_ollama("https://modal.com/docs/reference/modal.asgi_app")
+    let ollama_resp = fetch_data_ollama("https://docs.ollama.com/capabilities/web-search")
       .expect("ollama_web_fetch failed.");
     save_output(&ollama_resp, "ollama_fetch.json", "ollama_web_fetch");
     assert!(ollama_resp.content.chars().count() > 0);

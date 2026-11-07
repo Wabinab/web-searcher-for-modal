@@ -1,6 +1,6 @@
 use std::io::{self, Read};
 
-use crate::{apperror::{AppError, require}, metadata::{FetchRetVal, OllamaSearchResp, SearchResOl, ToolCall, WebFetchPayloadParallel, WebSearchPayloadParallel}, ollama_search::{fetch_data_ollama, search_data_ollama}, parallel_search::{fetch_data_parallel, search_data_parallel}};
+use crate::{apperror::{AppError}, metadata::{FetchRetVal, OllamaSearchResp, SearchResOl, ToolCall, WebFetchPayloadParallel, WebSearchPayloadParallel}, ollama_search::{fetch_data_ollama, search_data_ollama}, parallel_search::{fetch_data_parallel, search_data_parallel}};
 
 mod parallel_search;
 mod ollama_search;

@@ -139,11 +139,11 @@ pub(crate) struct FetchArgsParallel {
   // pub allow_live_fetch: bool,
 }
 
-// impl FetchArgsParallel {
-//   pub(crate) fn iter_urls(&self) -> impl Iterator<Item = &str> {
-//     self.urls.iter().map(|u| u.as_str())
-//   }
-// }
+impl FetchArgsParallel {
+  pub(crate) fn iter_urls(&self) -> impl Iterator<Item = &str> {
+    self.urls.iter().map(|u| u.as_str())
+  }
+}
 
 impl From<WebFetchArgs> for FetchArgsParallel {
   fn from(value: WebFetchArgs) -> Self {
@@ -174,7 +174,7 @@ pub(crate) struct SearchResOl {
 /// that looks like SearchResOl but single. 
 #[derive(Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
 pub(crate) struct FetchResOl {
-  pub title: String,
+  #[serde(default)] pub title: Option<String>,
   pub content: String, 
   pub links: Vec<String>
 }
@@ -222,7 +222,7 @@ impl From<SearchStructuredContent> for OllamaSearchResp {
 /// For web_fetch, we'll define a custom struct to return. 
 #[derive(Debug, Serialize)]
 pub(crate) struct FetchRetVal {
-  pub title: String,
+  pub title: Option<String>,
   pub content: String,
   #[serde(default, skip_serializing_if="Option::is_none")]
   pub publish_date: Option<String>,
