@@ -54,7 +54,7 @@ fn handle_tool_call(input: &str) -> Result<String, AppError> {
       Ok(serde_json::to_string(&retval)?)
     },
     "web_fetch" => {
-      let payload: WebFetchPayloadParallel = call.build_payload()?;
+      let _: WebFetchPayloadParallel = call.build_payload()?;
       Ok(String::new())
     },
     _ => { Err(AppError::BadRequest("Unknown tool call. Only web_search and web_fetch allowed.".to_string())) }

@@ -23,11 +23,11 @@ impl From<&str> for AppError {
   }
 }
 
-/// Attempt to imitate the require! macro in NEAR Protocol. 
-/// This, however, will return BadRequest upon error. 
-/// The first argument is the condition that should hold to NOT raise the error.
-/// i.e. if c is true, it'll not raise the error. If false, it'll raise the error. 
-/// If an error is raised, return BadRequest with the given error message.
-pub(crate) fn require(c: bool, err_msg: impl Into<String>) -> Result<(), AppError> {
-  if c { Ok(()) } else { Err(AppError::BadRequest(err_msg.into())) }
-}
+// /// Attempt to imitate the require! macro in NEAR Protocol. 
+// /// This, however, will return BadRequest upon error. 
+// /// The first argument is the condition that should hold to NOT raise the error.
+// /// i.e. if c is true, it'll not raise the error. If false, it'll raise the error. 
+// /// If an error is raised, return BadRequest with the given error message.
+// pub(crate) fn require(c: bool, err_msg: impl Into<String>) -> Result<(), AppError> {
+//   if c { Ok(()) } else { Err(AppError::BadRequest(err_msg.into())) }
+// }
