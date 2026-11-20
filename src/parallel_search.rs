@@ -1,35 +1,11 @@
-//! Design for Parallel Web Search and Web Fetch
+//! Design for Parallel Web Search, Web Fetch and Image Search
 //! We'll skip saving to redb first, so we can get up to speed. 
 
 use reqwest::{blocking::Client, header::{ACCEPT, CONTENT_TYPE}};
 use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Value;
 
-use crate::{apperror::AppError, metadata::{FetchResp, PARALLEL_MCP_URL, ParallelResp, SearchResp, WebFetchPayloadParallel, WebSearchPayloadParallel}};
-
-// /// Search the web using Parallel API. 
-// pub(crate) fn search_data_parallel(mcp_payload: &WebSearchPayloadParallel) -> Result<SearchResp, AppError> {
-//   let mcp_resp = Client::new().post(PARALLEL_MCP_URL).json(mcp_payload).send()
-//     .map_err(|e| AppError::BadRequest(format!("HTTP Request failed to search web using Parallel: {}. Try using Ollama instead.", e)))?;
-//   if !mcp_resp.status().is_success() { return Err(AppError::BadRequest(
-//     format!("Server returned status: {}", mcp_resp.status())
-//   )); }
-//   let json_body: SearchResp = mcp_resp.json().map_err(|e| 
-//     AppError::BadRequest(format!("JSON decode error search_data_parallel: {}", e)))?;
-//   Ok(json_body)
-// }
-
-
-// /// Crawl a specific website using Parallel API. 
-// pub(crate) fn fetch_data_parallel(mcp_payload: &WebFetchPayloadParallel) -> Result<FetchResp, AppError> {
-//   let mcp_resp = Client::new().post(PARALLEL_MCP_URL).json(mcp_payload).send()
-//     .map_err(|e| AppError::BadRequest(format!("HTTP Request failed to fetch website using Parallel: {}. Try using Ollama instead.", e)))?;
-//   if !mcp_resp.status().is_success() { return Err(AppError::BadRequest(
-//     format!("Server returned status: {}", mcp_resp.status())
-//   )); }
-//   let json_body: FetchResp = mcp_resp.json().map_err(|e|
-//     AppError::BadRequest(format!("JSON decode error fetch_data_parallel: {}", e)))?;
-//   Ok(json_body)
-// }
+use crate::{apperror::AppError, metadata::{FetchResp, ImageSearchPayloadParallel, ImageResp, PARALLEL_MCP_URL, ParallelResp, SearchResp, WebFetchPayloadParallel, WebSearchPayloadParallel}};
 
 /// Search the web using Parallel API.
 pub(crate) fn search_data_parallel(mcp_payload: &WebSearchPayloadParallel) -> Result<SearchResp, AppError> {
@@ -41,8 +17,12 @@ pub(crate) fn fetch_data_parallel(mcp_payload: &WebFetchPayloadParallel) -> Resu
   post_mcp(mcp_payload, "fetch_data_parallel", "fetch website")
 }
 
-/// Shared transport: POST the JSON-RPC payload, accept JSON or SSE, decode the envelope,
-/// and surface tool-level errors (`isError: true` arrives with HTTP 200).
+/// Search images using Parallel API. No Ollama fallback exists for this.
+pub(crate) fn image_search_parallel(mcp_payload: &ImageSearchPayloadParallel) -> Result<ImageResp, AppError> {
+  post_mcp(mcp_payload, "image_search_parallel", "search images")
+}
+
+/// Shared transport: POST the JSON-RPC payload, accept JSON or SSE, then decode.
 fn post_mcp<P, T>(payload: &P, fn_name: &str, action: &str) -> Result<ParallelResp<T>, AppError>
 where
   P: Serialize,
@@ -54,33 +34,45 @@ where
     .json(payload)
     .send()
     .map_err(|e| AppError::BadRequest(format!(
-      "HTTP Request failed to {} using Parallel: {}. Try using Ollama instead.", action, e)))?;
+      "HTTP Request failed to {} using Parallel: {}.", action, e)))?;
 
   let status = resp.status();
   let content_type = resp.headers().get(CONTENT_TYPE)
     .and_then(|v| v.to_str().ok()).unwrap_or("<none>").to_string();
+  let ctx = format!("status {}, content-type {}", status, content_type);
   let body = resp.text().map_err(|e| AppError::BadRequest(format!(
-    "{}: failed reading response body (status {}, content-type {}): {}", fn_name, status, content_type, e)))?;
+    "{}: failed reading response body ({}): {}", fn_name, ctx, e)))?;
 
   if !status.is_success() {
     return Err(AppError::BadRequest(format!(
-      "{}: server returned status {} (content-type {}), body head: {}",
-      fn_name, status, content_type, head(&body))));
+      "{}: server returned {}, body head: {}", fn_name, ctx, head(&body))));
+  }
+  decode_mcp_body(&body, fn_name, &ctx)
+}
+
+/// Pure decode step (no I/O) so it's unit-testable. Tool-level errors (`isError: true`,
+/// HTTP 200) and JSON-RPC `error` objects usually lack `structuredContent`, so they are
+/// detected BEFORE the typed parse; otherwise they'd surface as a misleading
+/// "missing field" decode error.
+fn decode_mcp_body<T: DeserializeOwned>(body: &str, fn_name: &str, ctx: &str) -> Result<ParallelResp<T>, AppError> {
+  let json_text = extract_json(body).ok_or_else(|| AppError::BadRequest(format!(
+    "{}: no JSON found in response ({}), body head: {}", fn_name, ctx, head(body))))?;
+
+  if let Ok(v) = serde_json::from_str::<Value>(&json_text) {
+    if let Some(err) = v.get("error") {
+      return Err(AppError::BadRequest(format!(
+        "{}: JSON-RPC error: {}", fn_name, head(&err.to_string()))));
+    }
+    if v["result"]["isError"].as_bool() == Some(true) {
+      let msg = v["result"]["content"][0]["text"].as_str().unwrap_or("<no content>");
+      return Err(AppError::BadRequest(format!(
+        "{}: Parallel tool returned isError: {}", fn_name, head(msg))));
+    }
   }
 
-  let json_text = extract_json(&body).ok_or_else(|| AppError::BadRequest(format!(
-    "{}: no JSON found in response (status {}, content-type {}), body head: {}",
-    fn_name, status, content_type, head(&body))))?;
-
-  let parsed: ParallelResp<T> = serde_json::from_str(&json_text).map_err(|e| AppError::BadRequest(format!(
-    "{}: JSON decode error: {} (line {}, col {}); content-type {}; body head: {}",
-    fn_name, e, e.line(), e.column(), content_type, head(&json_text))))?;
-
-  if parsed.result.is_error {
-    let msg = parsed.result.content.first().map(|c| c.text.as_str()).unwrap_or("<no content>");
-    return Err(AppError::BadRequest(format!("{}: Parallel tool returned isError: {}", fn_name, head(msg))));
-  }
-  Ok(parsed)
+  serde_json::from_str(&json_text).map_err(|e| AppError::BadRequest(format!(
+    "{}: JSON decode error: {} (line {}, col {}); {}; body head: {}",
+    fn_name, e, e.line(), e.column(), ctx, head(&json_text))))
 }
 
 /// Plain JSON body -> returned as is.
@@ -109,9 +101,9 @@ fn head(s: &str) -> String { s.chars().take(500).collect() }
 // ========================================
 #[cfg(test)]
 mod tests {
-  use crate::{metadata::{FetchRes, ToolCall}, test_utils::save_output};
+  use crate::{metadata::{FetchRes, ImageStructuredContent, ToolCall}, test_utils::save_output};
 
-use super::*;
+  use super::*;
 
   fn web_search_json() -> String {
     let payload = serde_json::json!({
@@ -150,6 +142,30 @@ use super::*;
     });
 
     payload.to_string()
+  }
+
+  fn image_search_json() -> String {
+    serde_json::json!({
+      "name": "image_search",
+      "arguments": {
+        "objective": "official diagram of the Golden Gate Bridge, not a photo",
+        "search_queries": ["golden gate bridge diagram"]
+      }
+    }).to_string()
+  }
+
+  fn image_ok_body() -> String {
+    serde_json::json!({
+      "jsonrpc": "2.0", "id": 1,
+      "result": {
+        "content": [{"type": "text", "text": "x"}],
+        "structuredContent": {
+          "search_id": "s", "session_id": "ss",
+          "results": [{"image_url": "https://i.com/a.jpg", "width": 10, "height": 20}]
+        },
+        "isError": false
+      }
+    }).to_string()
   }
 
   #[test]
@@ -231,6 +247,22 @@ use super::*;
   }
 
   #[test]
+  #[ignore]
+  fn test_image_search_parallel_works() {
+    let call = ToolCall::from_input(&image_search_json()).unwrap();
+    assert_eq!(call.name, "image_search");
+    let payload: ImageSearchPayloadParallel = call.build_payload().unwrap();
+    let resp = image_search_parallel(&payload);
+    assert!(resp.is_ok(), "Expected Ok, got {:#?}", resp.err());
+    let resp = resp.unwrap();
+    save_output(&resp, "parallel_image.json", "image_search_parallel");
+    assert!(!resp.result.is_error, "tool error: {:#?}", resp.result.content);
+    let results = &resp.result.structured_content.results;
+    assert!(!results.is_empty());
+    assert!(results.iter().all(|r| r.image_url.starts_with("http")));
+  }
+
+  #[test]
   fn fetch_payload_omits_search_queries_when_none() {
     let call = ToolCall::from_input(&web_fetch_json_no_queries()).unwrap();
     let payload: WebFetchPayloadParallel = call.build_payload().unwrap();
@@ -252,5 +284,44 @@ use super::*;
     let json = r#"{"url":"https://x.com","title":null,"publish_date":null,"excerpts":["a"]}"#;
     let r: FetchRes = serde_json::from_str(json).unwrap();
     assert!(r.title.is_none() && r.full_content.is_none());
+  }
+
+  #[test]
+  fn decode_plain_json_body() {
+    let r: ParallelResp<ImageStructuredContent> = decode_mcp_body(&image_ok_body(), "t", "ctx").unwrap();
+    assert_eq!(r.result.structured_content.results[0].width, Some(10));
+  }
+
+  #[test]
+  fn decode_sse_body() {
+    let body = format!("event: message\ndata: {}\n\n", image_ok_body());
+    let r: ParallelResp<ImageStructuredContent> = decode_mcp_body(&body, "t", "ctx").unwrap();
+    assert_eq!(r.result.structured_content.results.len(), 1);
+  }
+
+  #[test]
+  fn decode_surfaces_tool_error_without_structured_content() {
+    let body = r#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"Please sign in to use advanced mode"}],"isError":true}}"#;
+    let e = decode_mcp_body::<ImageStructuredContent>(body, "t", "ctx").unwrap_err().to_string();
+    assert!(e.contains("isError") && e.contains("sign in"), "got: {e}");
+  }
+
+  #[test]
+  fn decode_surfaces_jsonrpc_error() {
+    let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params"}}"#;
+    let e = decode_mcp_body::<ImageStructuredContent>(body, "t", "ctx").unwrap_err().to_string();
+    assert!(e.contains("JSON-RPC") && e.contains("Invalid params"), "got: {e}");
+  }
+
+  #[test]
+  fn decode_reports_garbage() {
+    let e = decode_mcp_body::<ImageStructuredContent>("<html>502</html>", "t", "ctx").unwrap_err().to_string();
+    assert!(e.contains("no JSON found"), "got: {e}");
+  }
+
+  #[test]
+  fn extract_json_picks_last_sse_event_with_json() {
+    let body = "event: ping\ndata: keepalive\n\nevent: message\ndata: {\"a\":1}\n\n";
+    assert_eq!(extract_json(body).as_deref(), Some("{\"a\":1}"));
   }
 }

@@ -13,7 +13,7 @@ pub(crate) const OLLAMA_MCP_URL: &str = "https://ollama.com/api/";  // /web_sear
 #[derive(Debug, Deserialize)]
 pub(crate) struct ParallelResp<T> {
   pub jsonrpc: String,
-  pub id: i32,
+  #[serde(default)] pub id: Value,
   pub result: ParallelRespRes<T>,
 }
 
@@ -36,6 +36,7 @@ pub(crate) struct ContentItem {
 
 pub(crate) type SearchResp = ParallelResp<SearchStructuredContent>;
 pub(crate) type FetchResp = ParallelResp<FetchStructuredContent>;
+pub(crate) type ImageResp = ParallelResp<ImageStructuredContent>;
 
 #[cfg_attr(test, derive(Serialize, Clone))]
 #[derive(Debug, Deserialize)]
@@ -78,6 +79,27 @@ pub(crate) struct FetchRes {
 }
 
 #[cfg_attr(test, derive(Serialize, Clone))]
+#[derive(Debug, Deserialize)]
+pub(crate) struct ImageStructuredContent {
+  #[serde(default)] pub search_id: String,
+  pub results: Vec<ImageRes>,
+  pub warnings: Option<Value>,
+  #[serde(default)] pub usage: Vec<Usage>,
+  #[serde(default)] pub session_id: String,
+}
+
+// May need Serialize in non-test later.
+#[cfg_attr(test, derive(Clone))]
+#[derive(Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+pub(crate) struct ImageRes {
+  pub image_url: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")] pub source_page_url: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")] pub title: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")] pub width: Option<u32>,
+  #[serde(default, skip_serializing_if = "Option::is_none")] pub height: Option<u32>
+}
+
+#[cfg_attr(test, derive(Serialize, Clone))]
 #[derive(Debug, Deserialize, BorshSerialize, BorshDeserialize)]
 pub(crate) struct Usage {
   pub name: String,
@@ -97,13 +119,14 @@ pub(crate) struct WebPayloadParallel<T> {
 #[cfg_attr(test, derive(Deserialize, Clone))]
 #[derive(Debug, Serialize)]
 pub(crate) struct WebParams<T> {
-  pub name: String,  // "web_search" / "web_fetch"
+  pub name: String,  // "web_search" / "web_fetch" / "image_search"
   pub arguments: T
 }
 
 pub(crate) type WebSearchPayloadParallel = WebPayloadParallel<SearchArgsParallel>;
 // Web-fetch is renamed "extract api" but the call is still "web_fetch"
 pub(crate) type WebFetchPayloadParallel = WebPayloadParallel<FetchArgsParallel>;
+pub(crate) type ImageSearchPayloadParallel = WebPayloadParallel<ImageArgsParallel>;
 
 #[cfg_attr(test, derive(Clone))]
 #[derive(Debug, Serialize, Deserialize)]
@@ -117,13 +140,6 @@ impl SearchArgsParallel {
     std::iter::once(&self.objective as &str).chain(self.search_queries.iter().map(|s| s as &str))
   }
 }
-
-impl From<WebSearchArgs> for SearchArgsParallel {
-  fn from(s: WebSearchArgs) -> Self {
-    SearchArgsParallel { objective: s.objective, search_queries: s.search_queries }
-  }
-}
-
 
 #[cfg_attr(test, derive(Clone))]
 #[derive(Debug, Serialize, Deserialize)]
@@ -145,12 +161,15 @@ impl FetchArgsParallel {
   }
 }
 
-impl From<WebFetchArgs> for FetchArgsParallel {
-  fn from(value: WebFetchArgs) -> Self {
-    FetchArgsParallel { objective: value.objective, urls: value.urls, 
-      search_queries: value.search_queries }
-  }
+#[cfg_attr(test, derive(Clone))]
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ImageArgsParallel {
+  pub objective: String,
+  pub search_queries: Vec<String>,
+  #[serde(default = "fast_mode", skip_deserializing)] pub mode: String,  // Always use "fast" as string. We supply, not AI.
 }
+
+fn fast_mode() -> String { "fast".to_string() }
 
 // ========================================================
 // Ollama
@@ -176,32 +195,28 @@ pub(crate) struct SearchResOl {
 pub(crate) struct FetchResOl {
   #[serde(default)] pub title: Option<String>,
   pub content: String, 
-  pub links: Vec<String>
+  #[serde(default)] pub links: Vec<String>
 }
 
 // ===============================================================
 // Tool Calling
 #[derive(Debug, Deserialize)]
 pub(crate) struct ToolCall {
-  pub id: String,
+  #[serde(default)] pub id: String,  // Never read anywhere, don't reject input over it.
   pub name: String,  // web_search or web_fetch
-  pub arguments: String
+  #[serde(deserialize_with = "args_as_string")] pub arguments: String
+}
+
+/// `arguments` may arrive as a JSON string (OpenAI style) or a JSON object 
+/// (Ollama style). Normalize to string so `build_payload` has a single path.
+fn args_as_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+  Ok(match Value::deserialize(d)? {
+    Value::String(s) => s,
+    other => other.to_string(),
+  })
 }
 
 // NOTE: impl ToolCall in tool_call_parser. 
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct WebFetchArgs {
-  pub objective: String,
-  pub urls: Vec<String>,
-  pub search_queries: Option<Vec<String>>
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct WebSearchArgs {
-  pub objective: String,
-  pub search_queries: Vec<String>
-}
 
 // ================================================================
 // These are the output format we'll return to the python side for compacting. 
@@ -257,7 +272,7 @@ impl From<FetchRes> for FetchRetVal {
 mod tests {
   use crate::{parallel_search::search_data_parallel, test_utils::web_search_json};
 
-use super::*;
+  use super::*;
 
   #[test]
   #[ignore]
@@ -346,5 +361,189 @@ use super::*;
     assert_eq!(ollama.results[1].title, "B");
     assert_eq!(ollama.results[1].publish_date, None);
     assert_eq!(ollama.results[1].content, "excerpt3");
+  }
+
+  // ---------- ToolCall envelope ----------
+  #[test]
+  fn tool_call_id_is_optional() {
+    let c: ToolCall = serde_json::from_str(r#"{"name":"web_fetch","arguments":{"urls":[],"objective":"o"}}"#).unwrap();
+    assert_eq!(c.id, "");
+  }
+
+  #[test]
+  fn tool_call_accepts_arguments_as_string_or_object() {
+    let s: ToolCall = serde_json::from_str(r#"{"name":"n","arguments":"{\"a\":1}"}"#).unwrap();
+    let o: ToolCall = serde_json::from_str(r#"{"name":"n","arguments":{"a":1}}"#).unwrap();
+    assert_eq!(s.arguments, r#"{"a":1}"#);
+    assert_eq!(o.arguments, r#"{"a":1}"#);
+  }
+
+  #[test]
+  fn tool_call_rejects_bare_args_with_helpful_error() {
+    let e = ToolCall::from_input(r#"{"urls":["https://x.com"],"objective":"o"}"#).unwrap_err().to_string();
+    assert!(e.contains("missing field `name`") && e.contains("urls"), "got: {e}");
+  }
+
+  #[test]
+  fn build_payload_names_the_tool_on_type_error() {
+    let c = ToolCall::from_input(r#"{"name":"web_fetch","arguments":{"urls":["https://x.com"],"objective":-1}}"#).unwrap();
+    let e = c.build_payload::<FetchArgsParallel>().unwrap_err().to_string();
+    assert!(e.contains("web_fetch") && e.contains("invalid type"), "got: {e}");
+  }
+
+  // ---------- Ollama fetch ----------
+  #[test]
+  fn ollama_fetch_parses_full_shape() {
+    let json = r#"{"title":"Example","content":"Body text","links":["https://a.com","https://b.com"]}"#;
+    let r: FetchResOl = serde_json::from_str(json).unwrap();
+    assert_eq!(r.title.as_deref(), Some("Example"));
+    assert_eq!(r.content, "Body text");
+    assert_eq!(r.links, vec!["https://a.com", "https://b.com"]);
+  }
+
+  #[test]
+  fn ollama_fetch_tolerates_missing_title_and_links() {
+    let r: FetchResOl = serde_json::from_str(r#"{"content":"x"}"#).unwrap();
+    assert!(r.title.is_none());
+    assert!(r.links.is_empty());
+  }
+
+  #[test]
+  fn ollama_fetch_rejects_missing_content() {
+    assert!(serde_json::from_str::<FetchResOl>(r#"{"title":"t","links":[]}"#).is_err());
+  }
+
+  #[test]
+  fn ollama_fetch_to_ret_val_serialization_shape() {
+    let r: FetchResOl = serde_json::from_str(r#"{"title":null,"content":"body","links":[]}"#).unwrap();
+    let v: FetchRetVal = r.into();
+    let j = serde_json::to_value(&v).unwrap();
+    assert_eq!(j["content"], "body");
+    assert!(j["title"].is_null());
+    assert!(j.get("publish_date").is_none());
+    assert!(j.get("full_content").is_none());
+    assert!(j.get("links").is_none(), "empty links must be omitted");
+  }
+
+  #[test]
+  fn parallel_fetch_res_to_ret_val_puts_url_in_links() {
+    let r = FetchRes {
+      url: "https://x.com".into(), title: None, publish_date: Some("2025-01-01".into()),
+      excerpts: vec!["a".into(), "b".into()], full_content: None,
+    };
+    let v: FetchRetVal = r.into();
+    assert_eq!(v.content, "a\nb");
+    assert_eq!(v.links, vec!["https://x.com"]);
+    assert_eq!(v.publish_date.as_deref(), Some("2025-01-01"));
+  }
+
+  // ---------- Image search ----------
+  const IMAGE_RESP_SAMPLE: &str = r#"{
+    "search_id": "search_fcb2b4f3c75e418687bccaa1a8381331",
+    "session_id": "session_fcb2b4f3c75e418687bccaa1a8381331",
+    "results": [
+      {"title": "Golden Gate Bridge at sunset",
+        "image_url": "https://www.example.com/images/golden-gate-sunset.jpg",
+        "source_page_url": "https://www.example.com/golden-gate-bridge",
+        "width": 1920, "height": 1080},
+      {"title": "The Golden Gate Bridge seen from the Marin Headlands",
+        "image_url": "https://www.example.org/photos/golden-gate-marin.jpg",
+        "source_page_url": "https://www.example.org/travel/san-francisco",
+        "width": 1600, "height": 1067}
+    ]
+  }"#;
+
+  #[test]
+  fn image_structured_content_parses_docs_sample() {
+    let s: ImageStructuredContent = serde_json::from_str(IMAGE_RESP_SAMPLE).unwrap();
+    assert_eq!(s.results.len(), 2);
+    assert_eq!(s.results[0].image_url, "https://www.example.com/images/golden-gate-sunset.jpg");
+    assert_eq!(s.results[0].source_page_url.as_deref(), Some("https://www.example.com/golden-gate-bridge"));
+    assert_eq!((s.results[1].width, s.results[1].height), (Some(1600), Some(1067)));
+    assert!(s.warnings.is_none() && s.usage.is_empty());
+  }
+
+  #[test]
+  fn image_res_tolerates_missing_optionals() {
+    let r: ImageRes = serde_json::from_str(r#"{"image_url":"https://i.com/a.jpg"}"#).unwrap();
+    assert!(r.title.is_none() && r.source_page_url.is_none() && r.width.is_none() && r.height.is_none());
+    let r: ImageRes = serde_json::from_str(
+      r#"{"image_url":"https://i.com/a.jpg","title":null,"width":null,"height":null}"#).unwrap();
+    assert!(r.title.is_none() && r.width.is_none());
+  }
+
+  #[test]
+  fn image_res_requires_image_url() {
+    assert!(serde_json::from_str::<ImageRes>(r#"{"title":"t"}"#).is_err());
+  }
+
+  #[test]
+  fn image_res_serialization_skips_nones() {
+    let r: ImageRes = serde_json::from_str(r#"{"image_url":"https://i.com/a.jpg"}"#).unwrap();
+    let j = serde_json::to_value(&r).unwrap();
+    assert_eq!(j.as_object().unwrap().len(), 1);
+  }
+
+  #[test]
+  fn parallel_resp_tolerates_missing_id() {
+    let sc: Value = serde_json::from_str(IMAGE_RESP_SAMPLE).unwrap();
+    let env = serde_json::json!({
+      "jsonrpc": "2.0",
+      "result": {"content": [{"type": "text", "text": "x"}], "structuredContent": sc, "isError": false}
+    }).to_string();
+    let r: ParallelResp<ImageStructuredContent> = serde_json::from_str(&env).unwrap();
+    assert_eq!(r.result.structured_content.results.len(), 2);
+  }
+
+  #[test]
+  fn parallel_resp_tolerates_string_id() {
+    let env = r#"{"jsonrpc":"2.0","id":"abc","result":{"content":[],"structuredContent":{"results":[]},"isError":false}}"#;
+    assert!(serde_json::from_str::<ParallelResp<ImageStructuredContent>>(env).is_ok());
+  }
+
+  #[test]
+  fn image_args_force_fast_even_if_caller_sends_advanced() {
+    let a: ImageArgsParallel = serde_json::from_str(
+      r#"{"objective":"o","search_queries":["q"],"mode":"advanced"}"#).unwrap();
+    assert_eq!(a.mode, "fast");
+    assert_eq!(serde_json::to_value(&a).unwrap()["mode"], "fast");
+  }
+
+  #[test]
+  fn image_args_default_mode_is_fast() {
+    let a: ImageArgsParallel = serde_json::from_str(r#"{"objective":"o","search_queries":["q"]}"#).unwrap();
+    assert_eq!(a.mode, "fast");
+  }
+
+  #[test]
+  fn image_args_require_objective_and_queries() {
+    assert!(serde_json::from_str::<ImageArgsParallel>(r#"{"objective":"o"}"#).is_err());
+    assert!(serde_json::from_str::<ImageArgsParallel>(r#"{"search_queries":["q"]}"#).is_err());
+  }
+
+  #[test]
+  fn image_args_drop_caller_supplied_override_and_unknown_fields() {
+    let a: ImageArgsParallel = serde_json::from_str(
+      r#"{"objective":"o","search_queries":["q"],
+          "override":{"advanced_settings":{"location":"US"}},
+          "advanced_settings":{"max_results":20}}"#).unwrap();
+    let j = serde_json::to_value(&a).unwrap();
+    assert_eq!(j.as_object().unwrap().len(), 3);  // objective, search_queries, mode
+    assert!(j.get("override").is_none());
+    assert!(j.get("advanced_settings").is_none());
+  }
+
+  #[test]
+  fn image_payload_builds_from_tool_call() {
+    let env = serde_json::json!({
+      "name": "image_search",
+      "arguments": {"objective": "diagram of a transformer, not a photo", "search_queries": ["transformer architecture diagram"]}
+    }).to_string();
+    let call = ToolCall::from_input(&env).unwrap();
+    let payload: ImageSearchPayloadParallel = call.build_payload().unwrap();
+    let v = serde_json::to_value(&payload).unwrap();
+    assert_eq!(v["method"], "tools/call");
+    assert_eq!(v["params"]["name"], "image_search");
+    assert_eq!(v["params"]["arguments"]["mode"], "fast");
   }
 }
